@@ -1,0 +1,45 @@
+{
+  "name": "expressserver",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "//": "중요 스크립트: dev(개발서버), build(번들), start(프로덕션 실행), lint(품질검사), test(단위테스트)",
+    "dev": "NODE_ENV=development tsx --watch src/server.ts",
+    "build": "rimraf dist && ttsup",
+    "start": "node dist/server.js",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "pino": "^9.9.5",
+    "pino-http": "^10.5.0",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.4.0",
+    "@types/supertest": "^6.0.3",
+    "eslint": "^9.35.0",
+    "rimraf": "^6.0.1",
+    "supertest": "^7.1.4",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.43.0",
+    "vitest": "^3.2.4"
+  }
+}

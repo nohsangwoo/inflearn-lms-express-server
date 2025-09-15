@@ -8,7 +8,7 @@
   },
   "scripts": {
     "//": "중요 스크립트: dev(개발서버), build(번들), start(프로덕션 실행), lint(품질검사), test(단위테스트)",
-    "dev": "NODE_ENV=development tsx --watch src/server.ts",
+    "dev": "cross-env NODE_ENV=development tsx --watch src/server.ts",
     "build": "rimraf dist && ttsup",
     "start": "node dist/server.js",
     "lint": "eslint .",
@@ -30,9 +30,11 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^24.4.0",
     "@types/supertest": "^6.0.3",
+    "cross-env": "^10.0.0",
     "eslint": "^9.35.0",
     "rimraf": "^6.0.1",
     "supertest": "^7.1.4",

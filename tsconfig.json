@@ -1,24 +1,50 @@
 {
+  // tsconfig.json (JSONC: 주석 허용)
+
   "compilerOptions": {
+    // ── 출력(Emit) 관련 ────────────────────────────────────────────────
+    // 컴파일된 JS가 생성될 폴더( tsc로 빌드할 때만 의미가 있어요 )
     "outDir": "./dist",
 
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "target": "es2022",
+    // ── 모듈/환경 설정 ────────────────────────────────────────────────
+    // Node의 ESM 방식과 맞추는 모듈 시스템(확장자 .js import 등 지원)
+    "module": "NodeNext",
+    // 모듈 해석 방법도 NodeNext로(패키지 exports 필드, .js 확장자 등 처리)
+    "moduleResolution": "NodeNext",
+    // 어떤 JS 문법으로 출력할지(ES2022면 Node 18/20/22에서 무난)
+    "target": "ES2022",
+    // Node 전역(process, fs 등) 타입 미리 로드
     "types": ["node"],
 
+    // ── 디버깅/선언 파일 ──────────────────────────────────────────────
+    // 디버깅 시 TS 원본 위치로 매핑(브레이크포인트 찍기 편함)
     "sourceMap": true,
+    // .d.ts(타입 선언) 파일 생성(라이브러리 배포할 때 켜요 / 앱이면 보통 끔)
     "declaration": true,
+    // .d.ts용 소스맵 생성(선언 파일 디버깅/추적에 도움)
     "declarationMap": true,
 
+    // ── 더 엄격한 타입 옵션(버그 예방) ───────────────────────────────
+    // arr[i] 결과에 undefined를 포함시켜 인덱스 실수를 조기에 잡음
     "noUncheckedIndexedAccess": true,
+    // 선택적 속성(?)을 “정말 undefined일 때만” 허용(느슨한 비교 방지)
     "exactOptionalPropertyTypes": true,
 
+    // ── 안전/개발경험(DX) 옵션 ───────────────────────────────────────
+    // TS의 엄격 모드 전체 활성화(가장 중요)
     "strict": true,
+    // 파일 단위 독립 변환 허용(tsx/tsup/esbuild 같은 트랜스파일러 친화)
     "isolatedModules": true,
+    // node_modules의 d.ts 검사 생략(속도↑, 실무에서 흔히 켬)
     "skipLibCheck": true,
-    "esModuleInterop": true,
+    // CommonJS 기본 내보내기를 ESM 스타일로 import 허용
+    // 예) import express from "express"
+    "esModuleInterop": true
   },
+
+  // 어떤 파일을 타입체크/컴파일할지(프로젝트 소스만)
   "include": ["src"],
+
+  // 어떤 경로는 건너뛸지(빌드 산출물 폴더는 제외)
   "exclude": ["dist"]
 }

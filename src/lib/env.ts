@@ -14,6 +14,14 @@ const Env = z.object({
     // ElevenLabs API 키 및 ffmpeg 경로(선택)
     ELEVENLABS_API_KEY: z.string().optional(),
     FFMPEG_PATH: z.string().optional(),
+    // Temp directory (optional): defaults to OS tmp
+    TEMP_DIR: z.string().optional(),
+    // AWS / CDN
+    AWS_ACCESS_KEY: z.string().optional(),
+    AWS_SECRET_KEY: z.string().optional(),
+    AWS_REGION: z.string().optional(),
+    AWS_BUCKET_NAME: z.string().optional(),
+    NEXT_PUBLIC_CDN_URL: z.string().optional(),
 });
 
 

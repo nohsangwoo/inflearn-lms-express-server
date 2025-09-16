@@ -1,0 +1,187 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Cart {
+  id        Int       @id @default(autoincrement())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime
+  userId    Int?
+  User      User?     @relation(fields: [userId], references: [id])
+  Lecture   Lecture[]
+}
+
+model Curriculum {
+  id                Int                 @id @default(autoincrement())
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime
+  lectureId         Int?
+  Lecture           Lecture?            @relation(fields: [lectureId], references: [id])
+  CurriculumSection CurriculumSection[]
+}
+
+model CurriculumSection {
+  id           Int         @id @default(autoincrement())
+  title        String
+  description  String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime
+  curriculumId Int?
+  isActive     Boolean     @default(true)
+  Curriculum   Curriculum? @relation(fields: [curriculumId], references: [id])
+  File         File[]
+  Video        Video[]
+}
+
+model DubTrack {
+  id        String   @id @default(cuid())
+  lang      String
+  status    String
+  url       String?
+  lufs      Float?
+  offsetMs  Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  videoId   Int?
+  Video     Video?   @relation(fields: [videoId], references: [id])
+
+  @@unique([videoId, lang])
+}
+
+model File {
+  id                  Int                @id @default(autoincrement())
+  url                 String
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime
+  curriculumSectionId Int?
+  CurriculumSection   CurriculumSection? @relation(fields: [curriculumSectionId], references: [id])
+}
+
+model Lecture {
+  id            Int          @id @default(autoincrement())
+  title         String
+  description   String?
+  price         Int
+  discountPrice Int?
+  isActive      Boolean      @default(true)
+  imageUrl      String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime
+  instructorId  Int?
+  Curriculum    Curriculum[]
+  User          User?        @relation(fields: [instructorId], references: [id])
+  Like          Like[]
+  Purchase      Purchase[]
+  Review        Review[]
+  Cart          Cart[]
+}
+
+model Like {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  lectureId Int?
+  userId    Int?
+  Lecture   Lecture? @relation(fields: [lectureId], references: [id])
+  User      User?    @relation(fields: [userId], references: [id])
+}
+
+model Purchase {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  lectureId Int
+  progress  Float    @default(0)
+  updatedAt DateTime
+  createdAt DateTime @default(now())
+  Lecture   Lecture  @relation(fields: [lectureId], references: [id])
+  User      User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, lectureId])
+}
+
+model Review {
+  id           Int      @id @default(autoincrement())
+  content      String
+  rating       Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+  userId       Int?
+  lectureId    Int?
+  parentId     Int?
+  isDeleted    Boolean  @default(false)
+  Lecture      Lecture? @relation(fields: [lectureId], references: [id])
+  Review       Review?  @relation("ReviewToReview", fields: [parentId], references: [id])
+  other_Review Review[] @relation("ReviewToReview")
+  User         User?    @relation(fields: [userId], references: [id])
+}
+
+model User {
+  id              Int        @id @default(autoincrement())
+  email           String     @unique
+  createdAt       DateTime   @default(now())
+  description     String?
+  isVerified      Boolean    @default(false)
+  nickname        String?
+  phoneNumber     String?
+  profileAddress  String?
+  profileImageUrl String?
+  role            Role       @default(STUDENT)
+  updatedAt       DateTime
+  supabaseId      String     @unique
+  Cart            Cart[]
+  Lecture         Lecture[]
+  Like            Like[]
+  Purchase        Purchase[]
+  Review          Review[]
+}
+
+model Video {
+  id                  Int                @id @default(autoincrement())
+  title               String?
+  description         String?
+  videoUrl            String
+  thumbnailUrl        String?
+  duration            Int?
+  language            Language           @default(KO)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime
+  curriculumSectionId Int?
+  masterKey           String
+  DubTrack            DubTrack[]
+  CurriculumSection   CurriculumSection? @relation(fields: [curriculumSectionId], references: [id])
+}
+
+enum Language {
+  KO
+  EN
+  JA
+  VI
+  RU
+  ZH
+  ZH_CN
+  ZH_TW
+  FR
+  DE
+  ES
+  PT
+  IT
+  ID
+  TH
+  HI
+  AR
+  TR
+  PL
+  UK
+}
+
+enum Role {
+  ADMIN
+  STUDENT
+  TEACHER
+}

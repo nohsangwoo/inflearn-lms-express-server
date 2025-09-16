@@ -17,7 +17,7 @@ export async function saveUnknownToFile(result: DownloadInput, destPath: string)
     if (isNodeReadable(result)) {
         await new Promise<void>((resolve, reject) => {
             const write = fs.createWriteStream(destPath);
-            result
+            (result as Readable)
                 .on("error", (err: unknown) => reject(err as Error))
                 .pipe(write)
                 .on("finish", () => resolve())
@@ -26,7 +26,7 @@ export async function saveUnknownToFile(result: DownloadInput, destPath: string)
         return;
     }
     if (isWebReadableStream(result)) {
-        const reader = result.getReader();
+        const reader = (result as ReadableStream<Uint8Array>).getReader();
         const write = fs.createWriteStream(destPath);
         await new Promise<void>((resolve, reject) => {
             write.on("error", reject);
@@ -70,7 +70,7 @@ export async function saveUnknownToFile(result: DownloadInput, destPath: string)
         return;
     }
     if (result instanceof Uint8Array || result instanceof ArrayBuffer) {
-        const buf = result instanceof ArrayBuffer ? Buffer.from(result) : Buffer.from(result);
+        const buf = result instanceof ArrayBuffer ? Buffer.from(result) : Buffer.from(result as Uint8Array);
         await fs.promises.writeFile(destPath, buf);
         return;
     }

@@ -22,6 +22,7 @@ const Env = z.object({
     AWS_REGION: z.string().optional(),
     AWS_BUCKET_NAME: z.string().optional(),
     NEXT_PUBLIC_CDN_URL: z.string().optional(),
+    CLOUDFRONT_DISTRIBUTION_ID: z.string().optional(),
 });
 
 

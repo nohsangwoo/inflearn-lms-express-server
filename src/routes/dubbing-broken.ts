@@ -1,9 +1,9 @@
 import { Router } from "express";
 import type { Router as ExpressRouter, Request } from "express";
-import { dubVideoWithElevenLabs, type DubbingRequest } from "../services/dubbing.js";
+import { dubVideoWithElevenLabsMulti, type MultiDubbingRequest } from "../services/dubbing-multi.js";
 import type { DubbingLanguageCode } from "../lib/elevenlabs.js";
 import { prisma } from "../lib/prisma.js";
-import { objectExistsInS3 } from "../lib/s3.js";
+import { objectExistsInS3, uploadBodyToS3 } from "../lib/s3.js";
 import { downloadToFile } from "../lib/s3-download.js";
 import { execa } from "execa";
 import path from "node:path";
@@ -22,7 +22,7 @@ interface BodyShape {
 	curriculumSectionId?: number;
 }
 
-router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
+router.post("/", async (req: Request<never, any, BodyShape>, res, next) => {
 	const body = req.body;
 	console.log("[Dubbing] Request received:", JSON.stringify(body, null, 2));
 
@@ -84,49 +84,73 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			});
 		}
 
+		// 2) Request dubbing for new languages
+		const params: MultiDubbingRequest = {
+			inputVideoUrl: body.inputVideoUrl || body.inputVideoPath!,
+			targetLanguages: newLangs,
+			sourceLanguage: body.sourceLanguage || "en",
+			videoFormat: "mp4",
+		};
+
+		console.log("[Dubbing] Calling ElevenLabs with params:", params);
+		const dubbings = await dubVideoWithElevenLabsMulti(params);
+
 		const results: Array<{ lang: string; url: string }> = [];
 
-		// 2) Process each language separately
-		for (const lang of newLangs) {
-			console.log(`[Dubbing] Processing ${lang}...`);
+		// 3) Process dubbing results
+		for (const dub of dubbings) {
+			const { language: lang, dubbingId, statusUrl } = dub;
+			console.log(`[Dubbing] Processing ${lang}, dubbingId: ${dubbingId}`);
 
-			try {
-				// Call ElevenLabs for this language
-				const dubbingReq: DubbingRequest = {
-					inputVideoPath: body.inputVideoPath,
-					inputVideoUrl: body.inputVideoUrl,
-					targetLanguage: lang,
-				};
+			// Wait for completion
+			let finalOutputUrl: string | null = null;
+			for (let i = 0; i < 60; i++) {
+				const statusResp = await fetch(statusUrl, {
+					headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY! },
+				});
+				const status = await statusResp.json();
 
-				console.log(`[Dubbing] Calling ElevenLabs for ${lang}...`);
-				const dubbingResult = await dubVideoWithElevenLabs(dubbingReq);
-
-				console.log(`[Dubbing] ${lang} completed:`, dubbingResult);
-
-				// Get the final URL
-				const finalUrl = dubbingResult.audioUrl || dubbingResult.videoUrl;
-				if (!finalUrl) {
-					console.error(`[Dubbing] No URL returned for ${lang}`);
-					continue;
+				if (status.status === "completed" || status.dubbed_file_url) {
+					finalOutputUrl = status.dubbed_file_url;
+					console.log(`[Dubbing] ${lang} completed, URL: ${finalOutputUrl}`);
+					break;
+				} else if (status.status === "failed") {
+					throw new Error(`Dubbing failed for ${lang}: ${status.error}`);
 				}
 
-				// Save to database
-				await prisma.dubTrack.upsert({
-					where: { videoId_lang: { videoId: video.id, lang } },
-					update: { status: "ready", url: finalUrl, updatedAt: new Date() },
-					create: { videoId: video.id, lang, status: "ready", url: finalUrl, updatedAt: new Date() },
-				});
-
-				results.push({ lang, url: finalUrl });
-				console.log(`[Dubbing] ${lang} saved to database`);
-
-			} catch (err) {
-				console.error(`[Dubbing] Failed to process ${lang}:`, err);
-				// Continue with next language instead of failing completely
+				console.log(`[Dubbing] ${lang} status: ${status.status}, waiting...`);
+				await new Promise((resolve) => setTimeout(resolve, 5000));
 			}
+
+			if (!finalOutputUrl) {
+				console.error(`[Dubbing] Timeout for ${lang}`);
+				continue;
+			}
+
+			// Download and upload to our S3
+			const response = await fetch(finalOutputUrl);
+			const buffer = Buffer.from(await response.arrayBuffer());
+
+			const { url } = await uploadBodyToS3({
+				body: buffer,
+				keyPrefix: `dub/${video.id}/${lang}/`,
+				fileName: "dubbed.mp3",
+				contentType: "audio/mpeg",
+			});
+
+			console.log(`[Dubbing] Uploaded ${lang} to S3: ${url}`);
+
+			// Save to database
+			await prisma.dubTrack.upsert({
+				where: { videoId_lang: { videoId: video.id, lang } },
+				update: { status: "ready", url, updatedAt: new Date() },
+				create: { videoId: video.id, lang, status: "ready", url, updatedAt: new Date() },
+			});
+
+			results.push({ lang, url });
 		}
 
-		// 3) HLS packaging
+		// 4) HLS packaging
 		const sectionId = body.curriculumSectionId ?? video.id;
 		const basePrefix = `assets/curriculumsection/${sectionId}/`;
 		const videoM3u8Key = `${basePrefix}video/video.m3u8`;
@@ -135,6 +159,7 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 		await fs.mkdir(tmpRoot, { recursive: true });
 
 		console.log(`[HLS] Processing section ${sectionId}`);
+		console.log(`[HLS] Temp directory: ${tmpRoot}`);
 
 		// Download existing master.m3u8 if it exists
 		const masterPath = path.join(tmpRoot, "master.m3u8");

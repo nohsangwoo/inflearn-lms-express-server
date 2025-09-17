@@ -1,0 +1,1 @@
+const key = (prefix + path.relative(localDir, f)).replace(/\\/g, "/");

@@ -1,0 +1,45 @@
+--- a/src/routes/dubbing.ts
++++ b/src/routes/dubbing.ts
+@@ -154,6 +154,8 @@
+ 		await fs.mkdir(videoDir, { recursive: true });
+
+ 		// Generate HLS with init.mp4
++		// IMPORTANT: FFmpeg bug - init.mp4 is created in CWD, not next to playlist
++		// Solution: Change CWD to videoDir and use relative paths
+ 		await execa("ffmpeg", [
+ 			"-y",
+ 			"-i", body.inputVideoPath ?? body.inputVideoUrl!,
+@@ -170,9 +172,9 @@
+ 			"-hls_segment_type", "fmp4",
+ 			"-hls_fmp4_init_filename", "init.mp4",
+ 			"-hls_flags", "independent_segments",
+-			"-hls_segment_filename", path.join(videoDir, "v_%03d.m4s"),
+-			path.join(videoDir, "video.m3u8")
+-		], { stdio: "inherit" });
++			"-hls_segment_filename", "v_%03d.m4s",
++			"video.m3u8"
++		], { stdio: "inherit", cwd: videoDir });
+
+ 		console.log("[HLS] Video HLS generated");
+
+@@ -218,6 +220,8 @@
+ 		], { stdio: "inherit" });
+
+ 		// Generate HLS with init.mp4
++		// IMPORTANT: Same FFmpeg bug - init.mp4 is created in CWD
++		// Solution: Change CWD to audioDir and use relative paths
+ 		await execa("ffmpeg", [
+ 			"-y",
+ 			"-i", aligned,
+@@ -230,9 +234,9 @@
+ 			"-hls_segment_type", "fmp4",
+ 			"-hls_fmp4_init_filename", "init.mp4",
+ 			"-hls_flags", "independent_segments",
+-			"-hls_segment_filename", path.join(audioDir, "a_%03d.m4s"),
+-			path.join(audioDir, "audio.m3u8")
+-		], { stdio: "inherit" });
++			"-hls_segment_filename", "a_%03d.m4s",
++			"audio.m3u8"
++		], { stdio: "inherit", cwd: audioDir });
+
+ 		console.log(`[HLS] Audio HLS for ${lang} generated`);

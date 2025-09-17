@@ -154,8 +154,6 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			await fs.mkdir(videoDir, { recursive: true });
 
 			// Generate HLS with init.mp4
-			// IMPORTANT: FFmpeg bug - init.mp4 is created in CWD, not next to playlist
-			// Solution: Change CWD to videoDir and use relative paths
 			await execa("ffmpeg", [
 				"-y",
 				"-i", body.inputVideoPath ?? body.inputVideoUrl!,
@@ -172,23 +170,15 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				"-hls_segment_type", "fmp4",
 				"-hls_fmp4_init_filename", "init.mp4",
 				"-hls_flags", "independent_segments",
-				"-hls_segment_filename", "v_%03d.m4s",
-				"video.m3u8"
-			], { stdio: "inherit", cwd: videoDir });
+				"-hls_segment_filename", path.join(videoDir, "v_%03d.m4s"),
+				path.join(videoDir, "video.m3u8")
+			], { stdio: "inherit" });
 
 			console.log("[HLS] Video HLS generated");
 
 			// List generated video files to confirm init.mp4
 			const videoFiles = await fs.readdir(videoDir);
 			console.log("[HLS] Video files generated:", videoFiles);
-
-			// Verify init.mp4 exists
-			const hasInit = videoFiles.includes("init.mp4");
-			if (!hasInit) {
-				console.error("[HLS] WARNING: init.mp4 not found in video directory!");
-			} else {
-				console.log("[HLS] init.mp4 successfully created in video directory");
-			}
 
 			await upsertMasterPlaylist({
 				masterPath,
@@ -229,8 +219,6 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			], { stdio: "inherit" });
 
 			// Generate HLS with init.mp4
-			// IMPORTANT: Same FFmpeg bug - init.mp4 is created in CWD
-			// Solution: Change CWD to audioDir and use relative paths
 			await execa("ffmpeg", [
 				"-y",
 				"-i", aligned,
@@ -243,18 +231,11 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				"-hls_segment_type", "fmp4",
 				"-hls_fmp4_init_filename", "init.mp4",
 				"-hls_flags", "independent_segments",
-				"-hls_segment_filename", "a_%03d.m4s",
-				"audio.m3u8"
-			], { stdio: "inherit", cwd: audioDir });
+				"-hls_segment_filename", path.join(audioDir, "a_%03d.m4s"),
+				path.join(audioDir, "audio.m3u8")
+			], { stdio: "inherit" });
 
 			console.log(`[HLS] Audio HLS for ${lang} generated`);
-
-			// Verify init.mp4 exists in audio directory
-			const audioFiles = await fs.readdir(audioDir);
-			const hasAudioInit = audioFiles.includes("init.mp4");
-			if (!hasAudioInit) {
-				console.error(`[HLS] WARNING: init.mp4 not found in audio/${lang} directory!`);
-			}
 
 			// Update master playlist
 			await patchMasterAddAudio({

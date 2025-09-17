@@ -5,8 +5,7 @@ import type { Router as ExpressRouter } from "express";
 import { Router } from "express";
 import { router as health } from "./health.js";
 import { router as users } from "./users.js";
-// import { router as dubbing } from "./dubbing.js";
-import { router as dubbing } from "./dubbing-fixed.js";
+import { router as dubbing } from "./dubbing.js";
 
 export const router: ExpressRouter = Router();
 

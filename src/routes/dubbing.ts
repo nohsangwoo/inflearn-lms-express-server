@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { uploadDirToS3 } from "../lib/s3-upload-dir.js";
-import { upsertMasterPlaylist, patchMasterAddAudio } from "../lib/media/hls-master.js";
+import { upsertMasterPlaylist } from "../lib/media/hls-master.js";
 
 export const router: ExpressRouter = Router();
 
@@ -154,8 +154,6 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			await fs.mkdir(videoDir, { recursive: true });
 
 			// Generate HLS with init.mp4
-			// IMPORTANT: FFmpeg bug - init.mp4 is created in CWD, not next to playlist
-			// Solution: Change CWD to videoDir and use relative paths
 			await execa("ffmpeg", [
 				"-y",
 				"-i", body.inputVideoPath ?? body.inputVideoUrl!,
@@ -190,10 +188,26 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				console.log("[HLS] init.mp4 successfully created in video directory");
 			}
 
+			// FIXED: Get all existing ready tracks for initial master playlist
+			const initialReadyTracks = await prisma.dubTrack.findMany({
+				where: { videoId: video.id, status: "ready" },
+				orderBy: { lang: 'asc' }
+			});
+
+			const initialAudioEntries = initialReadyTracks.map(track => ({
+				lang: track.lang,
+				name: track.lang,
+				uri: `audio/${track.lang}/audio.m3u8`,
+				groupId: "aud",
+				defaultFlag: track.lang === "ja" || track.lang === "ko"
+			}));
+
+			console.log("[HLS] Initial master playlist with existing tracks:", initialAudioEntries);
+
 			await upsertMasterPlaylist({
 				masterPath,
 				videoM3u8Rel: "video/video.m3u8",
-				audioEntries: []
+				audioEntries: initialAudioEntries
 			});
 		}
 
@@ -229,8 +243,6 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			], { stdio: "inherit" });
 
 			// Generate HLS with init.mp4
-			// IMPORTANT: Same FFmpeg bug - init.mp4 is created in CWD
-			// Solution: Change CWD to audioDir and use relative paths
 			await execa("ffmpeg", [
 				"-y",
 				"-i", aligned,
@@ -255,17 +267,34 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			if (!hasAudioInit) {
 				console.error(`[HLS] WARNING: init.mp4 not found in audio/${lang} directory!`);
 			}
-
-			// Update master playlist
-			await patchMasterAddAudio({
-				masterPath,
-				lang,
-				name: lang,
-				uri: `audio/${lang}/audio.m3u8`,
-				groupId: "aud",
-				defaultFlag: lang === "ko" // Korean as default
-			});
 		}
+
+		// FIXED: After all audio processing, regenerate master playlist with ALL languages from DB
+		console.log("[HLS] Regenerating master playlist with all dub tracks from DB...");
+
+		const allFinalTracks = await prisma.dubTrack.findMany({
+			where: { videoId: video.id, status: "ready" },
+			orderBy: { lang: 'asc' }
+		});
+
+		const finalAudioEntries = allFinalTracks.map(track => ({
+			lang: track.lang,
+			name: track.lang,
+			uri: `audio/${track.lang}/audio.m3u8`,
+			groupId: "aud",
+			defaultFlag: track.lang === "ja" || track.lang === "ko" // Japanese or Korean as default
+		}));
+
+		console.log("[HLS] Final master playlist audio entries:", finalAudioEntries);
+
+		// Regenerate master playlist with all languages
+		await upsertMasterPlaylist({
+			masterPath,
+			videoM3u8Rel: "video/video.m3u8",
+			audioEntries: finalAudioEntries
+		});
+
+		console.log("[HLS] Master playlist regenerated with all languages");
 
 		// Upload everything to S3
 		console.log("[HLS] Uploading to S3...");

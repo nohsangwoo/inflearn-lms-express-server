@@ -3,7 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { env } from "./env.js";
 
-const s3 = new S3Client({ region: env.AWS_REGION! });
+const region = env.AWS_REGION;
+if (!region) throw new Error("AWS_REGION not set");
+const s3 = new S3Client({
+	region,
+	...(env.AWS_ACCESS_KEY && env.AWS_SECRET_KEY
+		? { credentials: { accessKeyId: env.AWS_ACCESS_KEY, secretAccessKey: env.AWS_SECRET_KEY } }
+		: {}),
+});
 
 export async function uploadDirToS3(localDir: string, prefix: string): Promise<void> {
     const files = await walk(localDir);

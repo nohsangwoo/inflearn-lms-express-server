@@ -101,8 +101,14 @@ ffmpeg -y -i DUB_{lang}.mp3 \
 ```ts
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createReadStream } from "fs";
-const s3 = new S3Client({ region: process.env.AWS_REGION });
-
+const region = env.AWS_REGION;
+if (!region) throw new Error("AWS_REGION not set");
+const s3 = new S3Client({
+	region,
+	...(env.AWS_ACCESS_KEY && env.AWS_SECRET_KEY
+		? { credentials: { accessKeyId: env.AWS_ACCESS_KEY, secretAccessKey: env.AWS_SECRET_KEY } }
+		: {}),
+});
 const CT: Record<string, string> = {
   ".m3u8": "application/vnd.apple.mpegurl",
   ".m4s": "video/iso.segment",

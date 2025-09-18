@@ -72,12 +72,13 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 		console.log("[Dubbing] Existing languages:", existingLangs);
 		console.log("[Dubbing] New languages to process:", newLangs);
 
-		// Check if origin track exists and create if needed
+		// Check if origin track exists
 		const hasOriginTrack = existingLangs.includes("origin");
 		if (!hasOriginTrack) {
-			console.log("[Dubbing] Creating origin audio track in database...");
-			const originalUrl = body.inputVideoUrl || body.inputVideoPath || video.videoUrl;
+			console.log("[Dubbing] Origin track doesn't exist, will create it");
 
+			// Create origin track in database
+			const originalUrl = body.inputVideoUrl || body.inputVideoPath || video.videoUrl;
 			await prisma.dubTrack.create({
 				data: {
 					videoId: video.id,
@@ -87,10 +88,10 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 					updatedAt: new Date()
 				}
 			});
-			console.log("[Dubbing] Origin track created");
+			console.log("[Dubbing] Origin track created in database");
 		}
 
-		if (newLangs.length === 0) {
+		if (newLangs.length === 0 && hasOriginTrack) {
 			return res.json({
 				ok: true,
 				videoId: video.id,
@@ -104,7 +105,7 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 
 		const results: Array<{ lang: string; url: string }> = [];
 
-		// 2) Process each language separately
+		// 2) Process each dubbing language separately
 		for (const lang of newLangs) {
 			console.log(`[Dubbing] Processing ${lang}...`);
 
@@ -166,7 +167,7 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 		}
 
 		// Generate video HLS if needed
-		if (true) { // TEMP: Force regenerate video
+		if (!await objectExistsInS3(videoM3u8Key)) {
 			console.log("[HLS] Generating video HLS...");
 			const videoDir = path.join(tmpRoot, "video");
 			await fs.mkdir(videoDir, { recursive: true });
@@ -206,7 +207,7 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				console.log("[HLS] init.mp4 successfully created in video directory");
 			}
 
-			// FIXED: Get all existing ready tracks for initial master playlist
+			// Get all existing ready tracks for initial master playlist
 			const initialReadyTracks = await prisma.dubTrack.findMany({
 				where: { videoId: video.id, status: "ready" },
 				orderBy: { lang: 'asc' }
@@ -239,11 +240,11 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 		// Generate audio HLS for origin (if not exists) and each target language
 		const languagesToProcess = [];
 
-		// Add origin if it doesn't exist in S3 yet
+		// Always process origin audio to ensure it's in master.m3u8
 		const originAudioM3u8Key = `${basePrefix}audio/origin/audio.m3u8`;
 		if (!await objectExistsInS3(originAudioM3u8Key)) {
 			languagesToProcess.push("origin");
-			console.log("[HLS] Origin audio will be processed");
+			console.log("[HLS] Origin audio will be processed (not exists in S3)");
 		} else {
 			console.log("[HLS] Origin audio already exists in S3");
 		}
@@ -263,14 +264,17 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			const track = await prisma.dubTrack.findUnique({
 				where: { videoId_lang: { videoId: video.id, lang } }
 			});
+
 			if (!track?.url) {
 				console.error(`[HLS] No track URL for ${lang}`);
 				continue;
 			}
 
 			console.log(`[HLS] Generating audio HLS for ${lang}...`);
+			console.log(`[HLS] Track URL for ${lang}: ${track.url}`);
 			const audioDir = path.join(tmpRoot, "audio", lang);
 			await fs.mkdir(audioDir, { recursive: true });
+			console.log(`[HLS] Audio directory created: ${audioDir}`);
 
 			let audioSource = path.join(audioDir, "source.wav");
 
@@ -288,8 +292,16 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				], { stdio: "inherit" });
 				console.log(`[HLS] Original audio extracted`);
 			} else {
-				// For dubbed languages, just normalize directly
-				audioSource = track.url;
+				// For dubbed languages, download and convert
+				audioSource = path.join(audioDir, "source.wav");
+				await execa("ffmpeg", [
+					"-y",
+					"-i", track.url,
+					"-acodec", "pcm_s16le",
+					"-ar", "48000",
+					"-ac", "2",
+					audioSource
+				], { stdio: "inherit" });
 			}
 
 			// Normalize audio
@@ -303,7 +315,7 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				aligned
 			], { stdio: "inherit" });
 
-			// Generate HLS with init.mp4
+			// Generate HLS segments
 			await execa("ffmpeg", [
 				"-y",
 				"-i", aligned,
@@ -327,10 +339,12 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			const hasAudioInit = audioFiles.includes("init.mp4");
 			if (!hasAudioInit) {
 				console.error(`[HLS] WARNING: init.mp4 not found in audio/${lang} directory!`);
+			} else {
+				console.log(`[HLS] init.mp4 successfully created in audio/${lang} directory`);
 			}
 		}
 
-		// FIXED: After all audio processing, regenerate master playlist with ALL languages from DB
+		// After all audio processing, regenerate master playlist with ALL languages from DB
 		console.log("[HLS] Regenerating master playlist with all dub tracks from DB...");
 
 		const allFinalTracks = await prisma.dubTrack.findMany({
@@ -362,7 +376,23 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			audioEntries: finalAudioEntries
 		});
 
-		console.log("[HLS] Master playlist regenerated with all languages");
+		console.log("[HLS] Master playlist regenerated with all languages (including origin)");
+
+		// List all files to be uploaded (for debugging)
+		console.log("[HLS] Files to upload:");
+		const listFiles = async (dir: string, prefix = ""): Promise<void> => {
+			const entries = await fs.readdir(dir, { withFileTypes: true });
+			for (const entry of entries) {
+				const fullPath = path.join(dir, entry.name);
+				const relativePath = path.join(prefix, entry.name);
+				if (entry.isDirectory()) {
+					await listFiles(fullPath, relativePath);
+				} else {
+					console.log(`  - ${relativePath}`);
+				}
+			}
+		};
+		await listFiles(tmpRoot);
 
 		// Upload everything to S3
 		console.log("[HLS] Uploading to S3...");

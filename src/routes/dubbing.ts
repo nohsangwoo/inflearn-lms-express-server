@@ -66,7 +66,7 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 		}
 
 		// Check which languages are already done
-		const existingLangs = video.DubTrack.map(t => t.lang);
+		const existingLangs = video.DubTrack.map((t: { lang: string }) => t.lang);
 		const newLangs = body.targetLanguages.filter(l => !existingLangs.includes(l));
 
 		console.log("[Dubbing] Existing languages:", existingLangs);
@@ -95,7 +95,7 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				ok: true,
 				videoId: video.id,
 				message: "All requested languages already exist",
-				results: video.DubTrack.map(t => ({
+				results: video.DubTrack.map((t: { lang: string; url: string }) => ({
 					lang: t.lang,
 					url: t.url
 				}))
@@ -110,11 +110,9 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 
 			try {
 				// Call ElevenLabs for this language
-				const dubbingReq: DubbingRequest = {
-					inputVideoPath: body.inputVideoPath,
-					inputVideoUrl: body.inputVideoUrl,
-					targetLanguage: lang,
-				};
+				const dubbingReq: DubbingRequest = body.inputVideoPath
+					? { inputVideoPath: body.inputVideoPath, targetLanguage: lang }
+					: { inputVideoUrl: body.inputVideoUrl as string, targetLanguage: lang };
 
 				console.log(`[Dubbing] Calling ElevenLabs for ${lang}...`);
 				const dubbingResult = await dubVideoWithElevenLabs(dubbingReq);
@@ -213,13 +211,13 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			});
 
 			const initialAudioEntries = initialReadyTracks
-				.sort((a, b) => {
+				.sort((a: { lang: string }, b: { lang: string }) => {
 					// Origin always comes first
 					if (a.lang === "origin") return -1;
 					if (b.lang === "origin") return 1;
 					return a.lang.localeCompare(b.lang);
 				})
-				.map(track => ({
+				.map((track: { lang: string }) => ({
 					lang: track.lang,
 					name: track.lang === "origin" ? "ORIGIN" : track.lang,
 					uri: `audio/${track.lang}/audio.m3u8`,
@@ -339,13 +337,13 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 		});
 
 		const finalAudioEntries = allFinalTracks
-			.sort((a, b) => {
+			.sort((a: { lang: string }, b: { lang: string }) => {
 				// Origin always comes first
 				if (a.lang === "origin") return -1;
 				if (b.lang === "origin") return 1;
 				return a.lang.localeCompare(b.lang);
 			})
-			.map(track => ({
+			.map((track: { lang: string }) => ({
 				lang: track.lang,
 				name: track.lang === "origin" ? "ORIGIN" : track.lang,
 				uri: `audio/${track.lang}/audio.m3u8`,
@@ -362,6 +360,25 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			audioEntries: finalAudioEntries
 		});
 
+		// Additionally, generate per-language master playlists: master_{lang}.m3u8
+		console.log("[HLS] Generating per-language master playlists...");
+		for (const entry of finalAudioEntries) {
+			const perLangMasterPath = path.join(tmpRoot, `master_${entry.lang}.m3u8`);
+			await upsertMasterPlaylist({
+				masterPath: perLangMasterPath,
+				videoM3u8Rel: "video/video.m3u8",
+				// Only include selected language as default in this master
+				audioEntries: [{
+					lang: entry.lang,
+					name: entry.name,
+					uri: entry.uri,
+					groupId: entry.groupId,
+					defaultFlag: true
+				}]
+			});
+			console.log(`[HLS] Per-language master created: master_${entry.lang}.m3u8`);
+		}
+
 		console.log("[HLS] Master playlist regenerated with all languages");
 
 		// Upload everything to S3
@@ -372,14 +389,21 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 		// Cleanup
 		await fs.rm(tmpRoot, { recursive: true, force: true });
 
-		const masterUrl = `${process.env.NEXT_PUBLIC_CDN_URL || "https://storage.lingoost.com"}/${basePrefix}master.m3u8`;
+		const cdn = process.env.NEXT_PUBLIC_CDN_URL || "https://storage.lingoost.com";
+		const masterUrl = `${cdn}/${basePrefix}master.m3u8`;
+		const perLanguageMasters: Record<string, string> = {};
+		for (const entry of finalAudioEntries) {
+			perLanguageMasters[entry.lang] = `${cdn}/${basePrefix}master_${entry.lang}.m3u8`;
+		}
 		console.log("[Dubbing] Complete! Master URL:", masterUrl);
+		console.log("[Dubbing] Per-language masters:", perLanguageMasters);
 
 		res.json({
 			ok: true,
 			videoId: video.id,
 			results,
-			masterUrl
+			masterUrl,
+			mastersByLanguage: perLanguageMasters
 		});
 	} catch (err) {
 		console.error("[Dubbing] Error:", err);

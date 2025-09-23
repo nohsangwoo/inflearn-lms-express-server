@@ -10,7 +10,7 @@ dotenv.config();
 const Env = z.object({
     // NODE_ENV는 세 가지 중 하나만 허용
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-    PORT: z.string().optional().default("3000"),
+    PORT: z.string().optional().default("3500"),
     // ElevenLabs API 키 및 ffmpeg 경로(선택)
     ELEVENLABS_API_KEY: z.string().optional(),
     FFMPEG_PATH: z.string().optional(),

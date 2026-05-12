@@ -6,6 +6,7 @@ import { Router } from "express";
 import { router as health } from "./health.js";
 import { router as users } from "./users.js";
 import { router as dubbing } from "./dubbing.js";
+import { router as refreshMaster } from "./refresh-master.js";
 
 export const router: ExpressRouter = Router();
 
@@ -18,3 +19,4 @@ router.get("/", (_req, res)=>{
 router.use("/health", health);
 router.use("/users", users);
 router.use("/api/dubbing", dubbing);
+router.use("/api/refresh-master", refreshMaster);

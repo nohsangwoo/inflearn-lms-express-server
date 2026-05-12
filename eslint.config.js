@@ -4,6 +4,9 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
+  {
+    ignores: ["dist/**", "*.js"]
+  },
   // 자바스크립트 기본 추천 규칙
   js.configs.recommended,
   // 타입스크립트 추천 규칙
@@ -25,7 +28,5 @@ export default tseslint.config(
             "varsIgnorePattern": "^_"        }
       ]
     },
-    // 검사에서 제외할 폴더
-    ignores: ["dist"]
   }
 );

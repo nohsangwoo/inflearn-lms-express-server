@@ -16,6 +16,7 @@ const Env = z.object({
     FFMPEG_PATH: z.string().optional(),
     // Temp directory (optional): defaults to OS tmp
     TEMP_DIR: z.string().optional(),
+    DATABASE_URL: z.string().min(1),
     // AWS / CDN
     AWS_ACCESS_KEY: z.string().optional(),
     AWS_SECRET_KEY: z.string().optional(),

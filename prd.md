@@ -447,31 +447,22 @@ export default function Page({ params }: { params: { id: string } }) {
 
 ### 6) Data model (example)
 
-If you’re on Prisma:
+Drizzle schema shape:
 
-```prisma
-model Video {
-  id           String   @id
-  title        String
-  durationMs   Int
-  masterKey    String   // s3 key: assets/{id}/master.m3u8
-  createdAt    DateTime @default(now())
-  DubTrack     DubTrack[]
-}
+```ts
+export const videos = pgTable("Video", {
+  id: serial("id").primaryKey(),
+  title: text("title"),
+  duration: integer("duration"),
+  masterKey: text("masterKey").notNull(),
+});
 
-model DubTrack {
-  id         String   @id @default(cuid())
-  videoId    String
-  lang       String
-  status     String   // queued|processing|ready|failed
-  lufs       Float?
-  offsetMs   Int?     // sync compensation
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  Video      Video    @relation(fields: [videoId], references: [id])
-  @@unique([videoId, lang])
-}
+export const dubTracks = pgTable("DubTrack", {
+  id: text("id").primaryKey(),
+  videoId: integer("videoId").references(() => videos.id),
+  lang: text("lang").notNull(),
+  status: text("status").notNull(),
+}, (table) => [uniqueIndex("DubTrack_videoId_lang_key").on(table.videoId, table.lang)]);
 ```
 
 ---

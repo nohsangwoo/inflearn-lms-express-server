@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
-import { prisma } from "../prisma.js";
+import { and, asc, eq } from "drizzle-orm";
+import { db, dubTracks, videos } from "../../db/index.js";
 
 export type AudioEntry = { lang: string; name: string; uri: string; groupId: string; defaultFlag?: boolean };
 
@@ -17,20 +18,16 @@ export async function generateMasterPlaylistFromDB(params: {
 
     try {
         // Get all ready DubTrack records for this video
-        const dubTracks = await prisma.dubTrack.findMany({
-            where: {
-                videoId: params.videoId,
-                status: "ready"
-            },
-            orderBy: {
-                lang: 'asc'
-            }
-        });
+        const readyTracks = await db
+            .select()
+            .from(dubTracks)
+            .where(and(eq(dubTracks.videoId, params.videoId), eq(dubTracks.status, "ready")))
+            .orderBy(asc(dubTracks.lang));
 
-        console.log(`[DB-Master] Found ${dubTracks.length} ready dub tracks:`, dubTracks.map(t => t.lang));
+        console.log(`[DB-Master] Found ${readyTracks.length} ready dub tracks:`, readyTracks.map(t => t.lang));
 
         // Create audio entries from DB data
-        const audioEntries: AudioEntry[] = dubTracks.map(track => ({
+        const audioEntries: AudioEntry[] = readyTracks.map(track => ({
             lang: track.lang,
             name: track.lang,
             uri: `audio/${track.lang}/audio.m3u8`,
@@ -72,20 +69,14 @@ export async function updateMasterPlaylistForSection(sectionId: number): Promise
 
     try {
         // Find video for this section
-        const video = await prisma.video.findFirst({
-            where: {
-                curriculumSectionId: sectionId
+        const video = await db.query.videos.findFirst({
+            where: eq(videos.curriculumSectionId, sectionId),
+            with: {
+                dubTracks: {
+                    where: (tracks, { eq }) => eq(tracks.status, "ready"),
+                    orderBy: (tracks, { asc }) => [asc(tracks.lang)],
+                },
             },
-            include: {
-                DubTrack: {
-                    where: {
-                        status: "ready"
-                    },
-                    orderBy: {
-                        lang: 'asc'
-                    }
-                }
-            }
         });
 
         if (!video) {
@@ -93,7 +84,7 @@ export async function updateMasterPlaylistForSection(sectionId: number): Promise
             return;
         }
 
-        console.log(`[DB-Master] Found video ${video.id} with ${video.DubTrack.length} ready tracks`);
+        console.log(`[DB-Master] Found video ${video.id} with ${video.dubTracks.length} ready tracks`);
 
         // Prepare paths
         const basePrefix = `assets/curriculumsection/${sectionId}/`;
@@ -126,10 +117,8 @@ export async function refreshMasterPlaylist(params: {
 
     try {
         // Find video for this section
-        const video = await prisma.video.findFirst({
-            where: {
-                curriculumSectionId: params.sectionId
-            }
+        const video = await db.query.videos.findFirst({
+            where: eq(videos.curriculumSectionId, params.sectionId),
         });
 
         if (!video) {

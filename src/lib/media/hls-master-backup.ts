@@ -8,7 +8,11 @@ export async function upsertMasterPlaylist(params: {
     audioEntries: AudioEntry[];
 }): Promise<void> {
     let content = "";
-    try { content = await fs.readFile(params.masterPath, "utf8"); } catch {}
+    try {
+        content = await fs.readFile(params.masterPath, "utf8");
+    } catch {
+        content = "";
+    }
     if (!content) content = "#EXTM3U\n";
 
     const lines = content.split("\n").filter(l => !l.startsWith("#EXT-X-MEDIA") && !l.startsWith("#EXT-X-STREAM-INF"));
@@ -42,5 +46,4 @@ function mediaLine(a: AudioEntry): string {
     const def = a.defaultFlag ? "YES" : "NO";
     return `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="${a.groupId}",NAME="${a.name}",LANGUAGE="${a.lang}",AUTOSELECT=YES,DEFAULT=${def},URI="${a.uri}"`;
 }
-
 

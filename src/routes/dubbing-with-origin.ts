@@ -1,8 +1,9 @@
 import { Router } from "express";
 import type { Router as ExpressRouter, Request } from "express";
+import { and, asc, eq } from "drizzle-orm";
 import { dubVideoWithElevenLabs, type DubbingRequest } from "../services/dubbing.js";
 import type { DubbingLanguageCode } from "../lib/elevenlabs.js";
-import { prisma } from "../lib/prisma.js";
+import { db, dubTracks, videos } from "../db/index.js";
 import { objectExistsInS3 } from "../lib/s3.js";
 import { downloadToFile } from "../lib/s3-download.js";
 import { execa } from "execa";
@@ -13,6 +14,10 @@ import { uploadDirToS3 } from "../lib/s3-upload-dir.js";
 import { upsertMasterPlaylist } from "../lib/media/hls-master.js";
 
 export const router: ExpressRouter = Router();
+
+type VideoWithDubTracks = typeof videos.$inferSelect & {
+	dubTracks: Array<typeof dubTracks.$inferSelect>;
+};
 
 interface BodyShape {
 	inputVideoPath?: string;
@@ -38,13 +43,15 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 
 	try {
 		// 1) Find or create Video record
-		let video = null;
+		let video: VideoWithDubTracks | undefined;
 
 		// Only search if curriculumSectionId is provided
 		if (body.curriculumSectionId !== undefined && body.curriculumSectionId !== null) {
-			video = await prisma.video.findFirst({
-				where: { curriculumSectionId: body.curriculumSectionId },
-				include: { DubTrack: true }
+			video = await db.query.videos.findFirst({
+				where: eq(videos.curriculumSectionId, body.curriculumSectionId),
+				with: {
+					dubTracks: true,
+				},
 			});
 		}
 
@@ -53,20 +60,26 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				res.status(400).json({ error: "curriculumSectionId required for new video" });
 				return;
 			}
-			video = await prisma.video.create({
-				data: {
+			const [createdVideo] = await db
+				.insert(videos)
+				.values({
 					curriculumSectionId: body.curriculumSectionId,
 					videoUrl: body.inputVideoUrl || "",
 					title: "Dubbed Video",
 					masterKey: `assets/curriculumsection/${body.curriculumSectionId}/master.m3u8`,
 					updatedAt: new Date(),
-				},
-				include: { DubTrack: true }
-			});
+				})
+				.returning();
+
+			if (!createdVideo) {
+				throw new Error("Video record creation failed");
+			}
+
+			video = { ...createdVideo, dubTracks: [] };
 		}
 
 		// Check which languages are already done
-		const existingLangs = video.DubTrack.map(t => t.lang);
+		const existingLangs = video.dubTracks.map((t) => t.lang);
 		const newLangs = body.targetLanguages.filter(l => !existingLangs.includes(l));
 
 		console.log("[Dubbing] Existing languages:", existingLangs);
@@ -79,15 +92,21 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 
 			// Create origin track in database
 			const originalUrl = body.inputVideoUrl || body.inputVideoPath || video.videoUrl;
-			await prisma.dubTrack.create({
-				data: {
+			const [originTrack] = await db
+				.insert(dubTracks)
+				.values({
 					videoId: video.id,
 					lang: "origin",
 					status: "ready",
 					url: originalUrl,
 					updatedAt: new Date()
-				}
-			});
+				})
+				.onConflictDoNothing({ target: [dubTracks.videoId, dubTracks.lang] })
+				.returning();
+
+			if (originTrack) {
+				video.dubTracks.push(originTrack);
+			}
 			console.log("[Dubbing] Origin track created in database");
 		}
 
@@ -96,9 +115,9 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				ok: true,
 				videoId: video.id,
 				message: "All requested languages already exist",
-				results: video.DubTrack.map(t => ({
+				results: video.dubTracks.map(t => ({
 					lang: t.lang,
-					url: t.url
+					url: t.url ?? ""
 				}))
 			});
 		}
@@ -111,11 +130,9 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 
 			try {
 				// Call ElevenLabs for this language
-				const dubbingReq: DubbingRequest = {
-					inputVideoPath: body.inputVideoPath,
-					inputVideoUrl: body.inputVideoUrl,
-					targetLanguage: lang,
-				};
+				const dubbingReq: DubbingRequest = body.inputVideoPath
+					? { inputVideoPath: body.inputVideoPath, targetLanguage: lang }
+					: { inputVideoUrl: body.inputVideoUrl as string, targetLanguage: lang };
 
 				console.log(`[Dubbing] Calling ElevenLabs for ${lang}...`);
 				const dubbingResult = await dubVideoWithElevenLabs(dubbingReq);
@@ -130,11 +147,13 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				}
 
 				// Save to database
-				await prisma.dubTrack.upsert({
-					where: { videoId_lang: { videoId: video.id, lang } },
-					update: { status: "ready", url: finalUrl, updatedAt: new Date() },
-					create: { videoId: video.id, lang, status: "ready", url: finalUrl, updatedAt: new Date() },
-				});
+				await db
+					.insert(dubTracks)
+					.values({ videoId: video.id, lang, status: "ready", url: finalUrl, updatedAt: new Date() })
+					.onConflictDoUpdate({
+						target: [dubTracks.videoId, dubTracks.lang],
+						set: { status: "ready", url: finalUrl, updatedAt: new Date() },
+					});
 
 				results.push({ lang, url: finalUrl });
 				console.log(`[Dubbing] ${lang} saved to database`);
@@ -208,10 +227,11 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 			}
 
 			// Get all existing ready tracks for initial master playlist
-			const initialReadyTracks = await prisma.dubTrack.findMany({
-				where: { videoId: video.id, status: "ready" },
-				orderBy: { lang: 'asc' }
-			});
+			const initialReadyTracks = await db
+				.select()
+				.from(dubTracks)
+				.where(and(eq(dubTracks.videoId, video.id), eq(dubTracks.status, "ready")))
+				.orderBy(asc(dubTracks.lang));
 
 			const initialAudioEntries = initialReadyTracks
 				.sort((a, b) => {
@@ -261,8 +281,8 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 				continue;
 			}
 
-			const track = await prisma.dubTrack.findUnique({
-				where: { videoId_lang: { videoId: video.id, lang } }
+			const track = await db.query.dubTracks.findFirst({
+				where: and(eq(dubTracks.videoId, video.id), eq(dubTracks.lang, lang))
 			});
 
 			if (!track?.url) {
@@ -347,10 +367,11 @@ router.post("/", async (req: Request<never, unknown, BodyShape>, res, next) => {
 		// After all audio processing, regenerate master playlist with ALL languages from DB
 		console.log("[HLS] Regenerating master playlist with all dub tracks from DB...");
 
-		const allFinalTracks = await prisma.dubTrack.findMany({
-			where: { videoId: video.id, status: "ready" },
-			orderBy: { lang: 'asc' }
-		});
+		const allFinalTracks = await db
+			.select()
+			.from(dubTracks)
+			.where(and(eq(dubTracks.videoId, video.id), eq(dubTracks.status, "ready")))
+			.orderBy(asc(dubTracks.lang));
 
 		const finalAudioEntries = allFinalTracks
 			.sort((a, b) => {
